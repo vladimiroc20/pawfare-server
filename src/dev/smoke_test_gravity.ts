@@ -40,6 +40,23 @@ function main() {
   const noop = settleOnGround(grounded, heights);
   assert(noop === null, "gravedad: un jugador ya apoyado no debe recibir ninguna corrección");
 
+  // Lo mismo debe valer para las rocas: settleOnGround no distingue el tipo de objeto,
+  // solo necesita x/y/health — una roca es estructuralmente compatible.
+  const rockX = 450;
+  const rock = { x: rockX, y: heightAt(heights, rockX), radius: 20, health: 60, maxHealth: 60 };
+  carveCrater(heights, rockX, rock.y, 30);
+  const newRockGroundY = heightAt(heights, rockX);
+  assert(
+    newRockGroundY > rock.y + 1.0,
+    "gravedad: el cráter también debe dejar el terreno más abajo que la roca (precondición del test)"
+  );
+  const rockSettled = settleOnGround(rock, heights);
+  assert(rockSettled !== null, "gravedad: settleOnGround debe detectar que la roca quedó flotando");
+  assert(
+    Math.abs((rockSettled as number) - newRockGroundY) < 0.01,
+    "gravedad: settleOnGround debe bajar la roca exactamente al nuevo nivel del suelo"
+  );
+
   console.log(
     "smoke test de gravedad OK — un jugador que pierde el terreno bajo sus pies cae en vez de quedar flotando"
   );

@@ -445,6 +445,13 @@ export class Match {
         p.y = groundY;
       }
     }
+
+    for (const o of this.obstacles) {
+      const groundY = settleOnGround(o, this.heights);
+      if (groundY !== null) {
+        o.y = groundY;
+      }
+    }
   }
 
   private checkMatchOverOrAdvance(): void {
