@@ -8,7 +8,7 @@ import {
   MIN_PLAYERS,
   POWER_SCALE,
 } from "../sim/Constants";
-import { damageObstacle, ObstacleLike, resolveKnockback, simulateProjectile } from "../sim/Combat";
+import { damageObstacle, ObstacleLike, resolveKnockback, simulatePiercer, simulateProjectile } from "../sim/Combat";
 import { buildRanking, isMatchOver, RankablePlayer, RankEntry } from "../sim/Ranking";
 import { spawnObstacles, spawnPlayers, SpawnedPlayer, SpawnedRock } from "../sim/Spawner";
 import { carveCrater, generateHeights } from "../sim/Terrain";
@@ -237,7 +237,9 @@ export class Match {
     const towardTarget = target.x >= shooter.x ? 1 : -1;
     const pullX = -towardTarget * (MAX_PULL * (0.55 + Math.random() * 0.35));
     const pullY = -(MAX_PULL * (0.25 + Math.random() * 0.35));
-    const weaponId = Math.random() < 0.35 ? "cluster" : Math.random() < 0.55 ? "bouncer" : "bazooka";
+    const weaponRoll = Math.random();
+    const weaponId =
+      weaponRoll < 0.25 ? "cluster" : weaponRoll < 0.5 ? "bouncer" : weaponRoll < 0.7 ? "piercer" : "bazooka";
 
     this.executeShot(shooter, pullX, pullY, getWeapon(weaponId));
   }
@@ -260,6 +262,33 @@ export class Match {
     const otherAnchors = this.players
       .filter((p) => p.id !== shooter.id && p.health > 0)
       .map((p) => ({ x: p.x, y: p.y - 14 }));
+
+    if (weapon.tunnelTicks > 0) {
+      const piercerHit = simulatePiercer(
+        anchorX, anchorY, vx, vy, this.wind, this.heights, this.obstacles, otherAnchors, weapon.tunnelTicks
+      );
+
+      if (piercerHit.outOfBounds) {
+        this.advanceTurn();
+        return;
+      }
+
+      for (const tp of piercerHit.tunnelPoints) {
+        carveCrater(this.heights, tp.x, tp.y, weapon.tunnelRadius);
+      }
+
+      if (piercerHit.hitObstacleIndex !== -1) {
+        const rock = this.obstacles[piercerHit.hitObstacleIndex];
+        const destroyed = damageObstacle(rock);
+        if (destroyed) {
+          this.obstacles.splice(piercerHit.hitObstacleIndex, 1);
+        }
+      }
+
+      this.applyExplosionAt(piercerHit.x, piercerHit.y, weapon.explosionRadius, weapon.damage);
+      this.checkMatchOverOrAdvance();
+      return;
+    }
 
     const hit = simulateProjectile(
       anchorX, anchorY, vx, vy, this.wind, this.heights, this.obstacles, otherAnchors, weapon.bounces

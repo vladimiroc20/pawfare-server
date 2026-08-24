@@ -8,6 +8,8 @@ export interface WeaponDef {
   clusterCount: number;
   clusterRadius: number;
   clusterDamage: number;
+  tunnelTicks: number;
+  tunnelRadius: number;
 }
 
 export const WEAPONS: Record<string, WeaponDef> = {
@@ -21,6 +23,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
     clusterCount: 0,
     clusterRadius: 0,
     clusterDamage: 0,
+    tunnelTicks: 0,
+    tunnelRadius: 0,
   },
   cluster: {
     id: "cluster",
@@ -32,6 +36,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
     clusterCount: 4,
     clusterRadius: 22,
     clusterDamage: 16,
+    tunnelTicks: 0,
+    tunnelRadius: 0,
   },
   bouncer: {
     id: "bouncer",
@@ -43,6 +49,21 @@ export const WEAPONS: Record<string, WeaponDef> = {
     clusterCount: 0,
     clusterRadius: 0,
     clusterDamage: 0,
+    tunnelTicks: 0,
+    tunnelRadius: 0,
+  },
+  piercer: {
+    id: "piercer",
+    name: "Perforador",
+    icon: "🗲",
+    explosionRadius: 26,
+    damage: 22,
+    bounces: 0,
+    clusterCount: 0,
+    clusterRadius: 0,
+    clusterDamage: 0,
+    tunnelTicks: 18,
+    tunnelRadius: 9,
   },
 };
 

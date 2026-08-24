@@ -214,6 +214,21 @@ async function runWeaponsCase() {
     `armas: el racimo debe dejar más de un cráter separado al esparcir sub-proyectiles (obtuve ${cluster.runs} tras ${attempts} intentos)`
   );
 
+  // El perforador vuela casi recto y perfora terreno en vez de explotar al primer contacto —
+  // el invariante es que deja una franja de terreno afectada notablemente más ancha que un
+  // impacto único de bazooka, no solo un cráter puntual.
+  let piercer = await fireAndMeasure("piercer", { dx: -80, dy: -30 });
+  let piercerAttempts = 1;
+  while (piercer.spread === 0 && piercerAttempts < 5) {
+    piercer = await fireAndMeasure("piercer", { dx: -80, dy: -30 });
+    piercerAttempts++;
+  }
+  assert(piercer.spread > 0, `armas: el perforador debe afectar el terreno (tras ${piercerAttempts} intentos)`);
+  assert(
+    piercer.spread > bazooka.spread,
+    `armas: el perforador debe dejar una franja más ancha que la bazooka (perforador=${piercer.spread}, bazooka=${bazooka.spread})`
+  );
+
   const fallback = await fireAndMeasure("arma-inexistente");
   assert(fallback.spread > 0, "armas: un weaponId inválido debe caer al arma por defecto, no romper el disparo");
 }

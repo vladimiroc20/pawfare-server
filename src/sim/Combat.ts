@@ -86,6 +86,77 @@ export function simulateProjectile(
   return { x, y, hitObstacleIndex: -1, outOfBounds: true };
 }
 
+export interface PiercerResult {
+  x: number;
+  y: number;
+  tunnelPoints: { x: number; y: number }[];
+  hitObstacleIndex: number;
+  outOfBounds: boolean;
+}
+
+export function simulatePiercer(
+  fromX: number,
+  fromY: number,
+  vx0: number,
+  vy0: number,
+  wind: number,
+  heights: ArrayLike<number>,
+  obstacles: ObstacleLike[],
+  otherAnchors: { x: number; y: number }[],
+  tunnelTicks: number
+): PiercerResult {
+  let x = fromX;
+  let y = fromY;
+  let vx = vx0;
+  let vy = vy0;
+  let tunnelTicksLeft = tunnelTicks;
+  const tunnelPoints: { x: number; y: number }[] = [];
+
+  for (let frame = 0; frame < 400; frame++) {
+    vy += GRAVITY * 0.15;
+    vx += wind * 0.0035;
+    x += vx;
+    y += vy;
+
+    let hitObstacleIndex = -1;
+    for (let i = 0; i < obstacles.length; i++) {
+      const o = obstacles[i];
+      if (Math.hypot(x - o.x, y - (o.y - o.radius * 0.5)) < o.radius + 6) {
+        hitObstacleIndex = i;
+        break;
+      }
+    }
+
+    let hitPlayer = false;
+    for (const a of otherAnchors) {
+      if (Math.hypot(x - a.x, y - a.y) < 18) {
+        hitPlayer = true;
+        break;
+      }
+    }
+
+    const outOfBounds = x < -20 || x > SCREEN_W + 20 || y > SCREEN_H + 40;
+
+    if (hitPlayer || hitObstacleIndex !== -1) {
+      return { x, y, tunnelPoints, hitObstacleIndex, outOfBounds: false };
+    }
+    if (outOfBounds) {
+      return { x, y, tunnelPoints, hitObstacleIndex: -1, outOfBounds: true };
+    }
+
+    if (isBelowGround(heights, x, y)) {
+      if (tunnelTicksLeft > 0) {
+        tunnelTicksLeft--;
+        tunnelPoints.push({ x, y });
+        continue;
+      }
+      return { x, y, tunnelPoints, hitObstacleIndex: -1, outOfBounds: false };
+    }
+  }
+
+  return { x, y, tunnelPoints, hitObstacleIndex: -1, outOfBounds: true };
+}
+
 export function damageObstacle(o: ObstacleLike): boolean {
   o.health = Math.max(0, o.health - ROCK_HIT_DAMAGE);
   return o.health <= 0;
