@@ -50,6 +50,15 @@ export interface PublicPlayer {
   connected: boolean;
 }
 
+export interface LastShot {
+  seq: number;
+  shooterId: string;
+  weaponId: string;
+  dx: number;
+  dy: number;
+  wind: number;
+}
+
 export interface MatchStateJSON {
   roomId: string;
   phase: "waiting" | "playing" | "ended";
@@ -64,6 +73,8 @@ export interface MatchStateJSON {
   obstacles: SpawnedRock[];
   terrainHeights: number[];
   ranking: RankEntry[] | null;
+  shotSeq: number;
+  lastShot: LastShot | null;
 }
 
 export interface MatchSnapshot {
@@ -81,6 +92,8 @@ export interface MatchSnapshot {
   phase: "waiting" | "playing" | "ended";
   eliminationOrder: string[];
   ranking: RankEntry[] | null;
+  shotSeq: number;
+  lastShot: LastShot | null;
 }
 
 export class Match {
@@ -101,6 +114,8 @@ export class Match {
   private ranking: RankEntry[] | null = null;
   private botTimer: NodeJS.Timeout | null = null;
   private onChange?: () => void;
+  private shotSeq = 0;
+  private lastShot: LastShot | null = null;
 
   constructor(roomId: string, options: MatchOptions, onChange?: () => void) {
     this.roomId = roomId;
@@ -130,6 +145,8 @@ export class Match {
     match.phase = snapshot.phase;
     match.eliminationOrder = snapshot.eliminationOrder;
     match.ranking = snapshot.ranking;
+    match.shotSeq = snapshot.shotSeq ?? 0;
+    match.lastShot = snapshot.lastShot ?? null;
     match.maybeScheduleBotTurn();
     return match;
   }
@@ -150,6 +167,8 @@ export class Match {
       phase: this.phase,
       eliminationOrder: this.eliminationOrder,
       ranking: this.ranking,
+      shotSeq: this.shotSeq,
+      lastShot: this.lastShot,
     };
   }
 
@@ -261,6 +280,8 @@ export class Match {
       obstacles: this.obstacles.map((o) => ({ ...o })),
       terrainHeights: [...this.heights],
       ranking: this.ranking,
+      shotSeq: this.shotSeq,
+      lastShot: this.lastShot,
     };
   }
 
@@ -316,6 +337,9 @@ export class Match {
       dy = (dy / len) * MAX_PULL;
     }
     if (len < 12) return;
+
+    this.shotSeq++;
+    this.lastShot = { seq: this.shotSeq, shooterId: shooter.id, weaponId: weapon.id, dx, dy, wind: this.wind };
 
     const anchorX = shooter.x;
     const anchorY = shooter.y - 14;
