@@ -3,6 +3,7 @@ import { PawfareState, PlayerState, RockState } from "../schema/PawfareState";
 import { BiomeSim, getBiome, randomBiome } from "../sim/Biomes";
 import {
   BOT_THINK_DELAY_MS,
+  DAMAGE,
   EXPLOSION_RADIUS,
   MAX_PLAYERS,
   MAX_PULL,
@@ -228,7 +229,7 @@ export class PawfareRoom extends Room<{ state: PawfareState }> {
     }
 
     for (const [id, p] of this.state.players.entries()) {
-      const result = resolveKnockback(p, this.heights, hit.x, hit.y);
+      const result = resolveKnockback(p, this.heights, hit.x, hit.y, EXPLOSION_RADIUS, DAMAGE);
       if (!result) continue;
       const wasAlive = p.health > 0;
       p.health = Math.max(0, p.health - result.damage);

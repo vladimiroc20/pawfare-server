@@ -31,8 +31,8 @@ export function createApiRouter(registry: MatchRegistry): Router {
       return;
     }
     try {
-      const { playerId, token, dx, dy } = req.body ?? {};
-      match.fire(playerId, token, Number(dx) || 0, Number(dy) || 0);
+      const { playerId, token, dx, dy, weaponId } = req.body ?? {};
+      match.fire(playerId, token, Number(dx) || 0, Number(dy) || 0, weaponId ? String(weaponId) : undefined);
       res.json({ state: match.toJSON() });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });

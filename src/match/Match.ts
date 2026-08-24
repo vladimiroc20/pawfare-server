@@ -2,17 +2,16 @@ import { randomUUID } from "crypto";
 import { BiomeSim, getBiome, randomBiome } from "../sim/Biomes";
 import {
   DISCONNECT_TIMEOUT_MS,
-  EXPLOSION_RADIUS,
   MAX_PLAYERS,
   MAX_PULL,
   MIN_PLAYERS,
   POWER_SCALE,
-  TERRAIN_RES,
 } from "../sim/Constants";
 import { damageObstacle, ObstacleLike, resolveKnockback, simulateProjectile } from "../sim/Combat";
 import { buildRanking, isMatchOver, RankablePlayer, RankEntry } from "../sim/Ranking";
 import { spawnObstacles, spawnPlayers, SpawnedPlayer, SpawnedRock } from "../sim/Spawner";
 import { carveCrater, generateHeights } from "../sim/Terrain";
+import { DEFAULT_WEAPON_ID, getWeapon, WeaponDef } from "../sim/Weapons";
 
 export interface MatchOptions {
   playerCount?: number;
@@ -156,13 +155,13 @@ export class Match {
     this.maybeScheduleBotTurn();
   }
 
-  fire(playerId: string, token: string, dx: number, dy: number): void {
+  fire(playerId: string, token: string, dx: number, dy: number, weaponId?: string): void {
     const player = this.authenticate(playerId, token);
     if (this.phase !== "playing") return;
     if (this.turnOrder[this.currentTurnIndex] !== playerId) return;
     if (player.isBot || player.health <= 0) return;
     player.lastSeenAt = Date.now();
-    this.executeShot(player, dx, dy);
+    this.executeShot(player, dx, dy, getWeapon(weaponId ?? DEFAULT_WEAPON_ID));
   }
 
   checkPresence(): void {
@@ -231,11 +230,12 @@ export class Match {
     const towardTarget = target.x >= shooter.x ? 1 : -1;
     const pullX = -towardTarget * (MAX_PULL * (0.55 + Math.random() * 0.35));
     const pullY = -(MAX_PULL * (0.25 + Math.random() * 0.35));
+    const weaponId = Math.random() < 0.35 ? "cluster" : Math.random() < 0.55 ? "bouncer" : "bazooka";
 
-    this.executeShot(shooter, pullX, pullY);
+    this.executeShot(shooter, pullX, pullY, getWeapon(weaponId));
   }
 
-  private executeShot(shooter: MatchPlayer, pullDx: number, pullDy: number): void {
+  private executeShot(shooter: MatchPlayer, pullDx: number, pullDy: number, weapon: WeaponDef): void {
     let dx = pullDx;
     let dy = pullDy;
     const len = Math.hypot(dx, dy);
@@ -254,7 +254,9 @@ export class Match {
       .filter((p) => p.id !== shooter.id && p.health > 0)
       .map((p) => ({ x: p.x, y: p.y - 14 }));
 
-    const hit = simulateProjectile(anchorX, anchorY, vx, vy, this.wind, this.heights, this.obstacles, otherAnchors);
+    const hit = simulateProjectile(
+      anchorX, anchorY, vx, vy, this.wind, this.heights, this.obstacles, otherAnchors, weapon.bounces
+    );
 
     if (hit.outOfBounds) {
       this.advanceTurn();
@@ -269,10 +271,34 @@ export class Match {
       }
     }
 
-    carveCrater(this.heights, hit.x, hit.y, EXPLOSION_RADIUS);
+    this.applyExplosionAt(hit.x, hit.y, weapon.explosionRadius, weapon.damage);
+
+    if (weapon.clusterCount > 0) {
+      for (let i = 0; i < weapon.clusterCount; i++) {
+        const angle = -Math.PI * (0.15 + Math.random() * 0.7);
+        const speed = 2.0 + Math.random() * 2.2;
+        const subVx = Math.cos(angle) * speed * (Math.random() < 0.5 ? -1 : 1);
+        const subVy = Math.sin(angle) * speed;
+        const subHit = simulateProjectile(
+          hit.x, hit.y - 4, subVx, subVy, this.wind, this.heights, this.obstacles, otherAnchors, 0
+        );
+        if (subHit.hitObstacleIndex !== -1) {
+          const rock = this.obstacles[subHit.hitObstacleIndex];
+          const destroyed = damageObstacle(rock);
+          if (destroyed) this.obstacles.splice(subHit.hitObstacleIndex, 1);
+        }
+        this.applyExplosionAt(subHit.x, subHit.y, weapon.clusterRadius, weapon.clusterDamage);
+      }
+    }
+
+    this.checkMatchOverOrAdvance();
+  }
+
+  private applyExplosionAt(x: number, y: number, radius: number, damage: number): void {
+    carveCrater(this.heights, x, y, radius);
 
     for (const p of this.players) {
-      const result = resolveKnockback(p, this.heights, hit.x, hit.y);
+      const result = resolveKnockback(p, this.heights, x, y, radius, damage);
       if (!result) continue;
       const wasAlive = p.health > 0;
       p.health = Math.max(0, p.health - result.damage);
@@ -282,8 +308,6 @@ export class Match {
         this.eliminationOrder.push(p.id);
       }
     }
-
-    this.checkMatchOverOrAdvance();
   }
 
   private checkMatchOverOrAdvance(): void {

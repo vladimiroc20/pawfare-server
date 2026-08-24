@@ -107,6 +107,72 @@ async function runBotAndReconnectCase() {
   assert(p.connected, "reconexión: debe quedar marcado como conectado de nuevo");
 }
 
+function affectedIndexCount(before: number[], after: number[]): number {
+  let count = 0;
+  for (let i = 0; i < before.length; i++) {
+    if (Math.abs(before[i] - after[i]) > 0.5) count++;
+  }
+  return count;
+}
+
+function affectedRunCount(before: number[], after: number[]): number {
+  let runs = 0;
+  let wasAffected = false;
+  for (let i = 0; i < before.length; i++) {
+    const affected = Math.abs(before[i] - after[i]) > 0.5;
+    if (affected && !wasAffected) runs++;
+    wasAffected = affected;
+  }
+  return runs;
+}
+
+async function fireAndMeasure(
+  weaponId: string,
+  pull: { dx: number; dy: number } = { dx: 50, dy: -20 }
+): Promise<{ spread: number; runs: number }> {
+  const j1 = await post("/quickmatch", { playerCount: 2, biomeId: "backyard" });
+  const j2 = await post("/quickmatch", { playerCount: 2, biomeId: "backyard" });
+  const roomId = j1.json.roomId;
+
+  const shooterId = j2.json.state.turnOrder[j2.json.state.currentTurnIndex];
+  const shooter = shooterId === j1.json.playerId ? j1.json : j2.json;
+  const heightsBefore: number[] = j2.json.state.terrainHeights;
+
+  const fireRes = await post(`/rooms/${roomId}/fire`, {
+    playerId: shooter.playerId,
+    token: shooter.token,
+    dx: pull.dx,
+    dy: pull.dy,
+    weaponId,
+  });
+  assert(fireRes.status === 200, `armas (${weaponId}): el disparo debe aceptarse`);
+
+  const after = await get(`/rooms/${roomId}/state`);
+  return {
+    spread: affectedIndexCount(heightsBefore, after.json.terrainHeights),
+    runs: affectedRunCount(heightsBefore, after.json.terrainHeights),
+  };
+}
+
+async function runWeaponsCase() {
+  const bazooka = await fireAndMeasure("bazooka");
+  assert(bazooka.spread > 0, "armas: la bazooka debe afectar el terreno");
+  assert(bazooka.runs === 1, `armas: la bazooka debe dejar un único cráter (obtuve ${bazooka.runs})`);
+
+  const bouncer = await fireAndMeasure("bouncer", { dx: -20, dy: -60 });
+  assert(bouncer.spread > 0, "armas: el rebote debe afectar el terreno al aterrizar");
+
+  const cluster = await fireAndMeasure("cluster");
+  assert(cluster.spread > 0, "armas: el racimo debe afectar el terreno");
+  assert(
+    cluster.runs > 1,
+    `armas: el racimo debe dejar más de un cráter separado al esparcir sub-proyectiles (obtuve ${cluster.runs})`
+  );
+
+  const fallback = await fireAndMeasure("arma-inexistente");
+  assert(fallback.spread > 0, "armas: un weaponId inválido debe caer al arma por defecto, no romper el disparo");
+}
+
 async function runTimeoutPresenceCase() {
   const j1 = await post("/quickmatch", { playerCount: 2, biomeId: "backyard" });
   const j2 = await post("/quickmatch", { playerCount: 2, biomeId: "backyard" });
@@ -140,6 +206,9 @@ async function main() {
 
     await runBotAndReconnectCase();
     console.error("[smoke-api] caso bot/reconexión OK");
+
+    await runWeaponsCase();
+    console.error("[smoke-api] caso armas (bazooka/rebote/racimo) OK");
 
     await runTimeoutPresenceCase();
     console.error("[smoke-api] caso timeout de presencia OK");

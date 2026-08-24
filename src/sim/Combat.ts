@@ -1,6 +1,4 @@
 import {
-  DAMAGE,
-  DAMAGE_RANGE,
   GRAVITY,
   KNOCKBACK_FORCE,
   KNOCK_GRAVITY,
@@ -32,12 +30,14 @@ export function simulateProjectile(
   wind: number,
   heights: ArrayLike<number>,
   obstacles: ObstacleLike[],
-  otherAnchors: { x: number; y: number }[]
+  otherAnchors: { x: number; y: number }[],
+  bounces: number = 0
 ): ProjectileHit {
   let x = fromX;
   let y = fromY;
   let vx = vx0;
   let vy = vy0;
+  let bouncesLeft = bounces;
 
   for (let frame = 0; frame < 400; frame++) {
     vy += GRAVITY;
@@ -65,8 +65,18 @@ export function simulateProjectile(
     const outOfBounds = x < -20 || x > SCREEN_W + 20 || y > SCREEN_H + 40;
     const hitGround = isBelowGround(heights, x, y);
 
-    if (hitPlayer || hitGround || hitObstacleIndex !== -1) {
+    if (hitPlayer || hitObstacleIndex !== -1) {
       return { x, y, hitObstacleIndex, outOfBounds: false };
+    }
+    if (hitGround) {
+      if (bouncesLeft > 0) {
+        bouncesLeft--;
+        y = heightAt(heights, x) - 1;
+        vy = -vy * 0.55;
+        vx *= 0.85;
+        continue;
+      }
+      return { x, y, hitObstacleIndex: -1, outOfBounds: false };
     }
     if (outOfBounds) {
       return { x, y, hitObstacleIndex: -1, outOfBounds: true };
@@ -97,19 +107,22 @@ export function resolveKnockback(
   player: PlayerLike,
   heights: number[],
   blastX: number,
-  blastY: number
+  blastY: number,
+  explosionRadius: number,
+  baseDamage: number
 ): KnockbackResult | null {
   if (player.health <= 0) return null;
 
+  const damageRange = explosionRadius + 20;
   const anchorY = player.y - 14;
   const dx = player.x - blastX;
   const dy = anchorY - blastY;
   let d = Math.hypot(dx, dy);
   if (d === 0) d = 1;
-  if (d >= DAMAGE_RANGE) return null;
+  if (d >= damageRange) return null;
 
-  const falloff = 1 - Math.min(d / DAMAGE_RANGE, 1);
-  const damage = DAMAGE * (0.4 + 0.6 * falloff);
+  const falloff = 1 - Math.min(d / damageRange, 1);
+  const damage = baseDamage * (0.4 + 0.6 * falloff);
 
   const nx = dx / d;
   const ny = dy / d;
