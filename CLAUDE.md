@@ -21,7 +21,8 @@ pawfare-server/
 │   │   ├── Constants.ts     # mismas constantes que Constants.gd (gravedad, daño, pull, etc.)
 │   │   ├── Biomes.ts        # espejo de Biomes.gd, solo obstacleDelta/windScale (lo visual vive en el cliente)
 │   │   ├── Terrain.ts       # mapa de alturas: generateHeights, heightAt, carveCrater
-│   │   ├── Combat.ts        # simulateProjectile (vuelo tick a tick) + resolveKnockback (con settle server-side)
+│   │   ├── Combat.ts        # simulateProjectile/simulatePiercer (vuelo tick a tick) + resolveKnockback (settle server-side)
+│   │   ├── Weapons.ts       # bazooka/cluster/bouncer/piercer — radios, daño, rebotes, túnel
 │   │   ├── Ranking.ts       # espejo de _build_ffa_ranking/_build_team_ranking del cliente
 │   │   └── Spawner.ts       # espejo de _spawn_players/_generate_obstacles del cliente
 │   ├── match/               # segunda implementación de sala, para el cliente Godot — ver "API REST" abajo
