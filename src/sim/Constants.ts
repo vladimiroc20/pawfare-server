@@ -37,3 +37,8 @@ export const PLAYER_LABELS = ["Jugador 1", "Jugador 2", "Jugador 3", "Jugador 4"
 export const MAX_TURN_SECONDS = 30;
 export const BOT_THINK_DELAY_MS = 1400;
 export const RECONNECTION_WINDOW_SECONDS = 60;
+
+// API REST (pawfare-client vía HTTPRequest/polling, ver src/match/):
+export const HEARTBEAT_INTERVAL_MS = 5000;
+export const DISCONNECT_TIMEOUT_MS = 15000;
+export const PRESENCE_CHECK_INTERVAL_MS = 3000;

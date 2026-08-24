@@ -1,0 +1,158 @@
+import "../polyfillMetadata";
+import http from "http";
+import express from "express";
+import cors from "cors";
+import { MatchRegistry } from "../match/MatchRegistry";
+import { createApiRouter } from "../routes/api";
+import { DISCONNECT_TIMEOUT_MS } from "../sim/Constants";
+
+const PORT = 22780;
+const BASE = `http://localhost:${PORT}/api`;
+
+function assert(cond: unknown, msg: string): asserts cond {
+  if (!cond) throw new Error(`Assertion failed: ${msg}`);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function post(path: string, body: unknown): Promise<{ status: number; json: any }> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return { status: res.status, json: await res.json() };
+}
+
+async function get(path: string): Promise<{ status: number; json: any }> {
+  const res = await fetch(`${BASE}${path}`);
+  return { status: res.status, json: await res.json() };
+}
+
+async function run2PlayerCase() {
+  const j1 = await post("/quickmatch", { playerCount: 2, biomeId: "backyard" });
+  assert(j1.status === 200, "2p: quickmatch debe responder 200");
+  const roomId = j1.json.roomId;
+
+  const j2 = await post("/quickmatch", { playerCount: 2, biomeId: "backyard" });
+  assert(j2.json.roomId === roomId, "2p: el segundo jugador debe caer en la misma sala");
+  assert(j2.json.state.phase === "playing", "2p: la partida debe iniciar al llenarse el cupo");
+
+  const shooterId = j2.json.state.turnOrder[j2.json.state.currentTurnIndex];
+  const shooter = shooterId === j1.json.playerId ? j1.json : j2.json;
+
+  const before = await get(`/rooms/${roomId}/state`);
+  const heightsBefore = before.json.terrainHeights;
+
+  const fireRes = await post(`/rooms/${roomId}/fire`, {
+    playerId: shooter.playerId,
+    token: shooter.token,
+    dx: 50,
+    dy: -20,
+  });
+  assert(fireRes.status === 200, "2p: el disparo debe aceptarse");
+  await sleep(50);
+
+  const after = await get(`/rooms/${roomId}/state`);
+  const changed = heightsBefore.some((h: number, i: number) => Math.abs(h - after.json.terrainHeights[i]) > 0.001);
+  assert(changed, "2p: el terreno debe cambiar tras un disparo válido");
+
+  const notOnTurnId = after.json.turnOrder[after.json.currentTurnIndex] === j1.json.playerId
+    ? j2.json.playerId
+    : j1.json.playerId;
+  const notOnTurn = notOnTurnId === j1.json.playerId ? j1.json : j2.json;
+
+  await post(`/rooms/${roomId}/fire`, {
+    playerId: notOnTurn.playerId,
+    token: notOnTurn.token,
+    dx: 50,
+    dy: -20,
+  });
+  const stateAfterWrongTurn = await get(`/rooms/${roomId}/state`);
+  assert(
+    stateAfterWrongTurn.json.terrainHeights.every(
+      (h: number, i: number) => h === after.json.terrainHeights[i]
+    ),
+    "2p: disparar fuera de turno no debe tener efecto"
+  );
+}
+
+async function runBotAndReconnectCase() {
+  const j1 = await post("/quickmatch", { playerCount: 2, biomeId: "backyard" });
+  const j2 = await post("/quickmatch", { playerCount: 2, biomeId: "backyard" });
+  const roomId = j1.json.roomId;
+
+  const shooterId = j2.json.state.turnOrder[j2.json.state.currentTurnIndex];
+  const shooter = shooterId === j1.json.playerId ? j1.json : j2.json;
+
+  await post(`/rooms/${roomId}/leave`, { playerId: shooter.playerId, token: shooter.token });
+
+  let state = (await get(`/rooms/${roomId}/state`)).json;
+  let p = state.players.find((p: any) => p.id === shooter.playerId);
+  assert(p.isBot, "bot: debe activarse el bot al salir explícitamente");
+  assert(!p.connected, "bot: debe quedar marcado como desconectado");
+
+  const heightsBefore = state.terrainHeights;
+  await sleep(1400 + 500);
+  state = (await get(`/rooms/${roomId}/state`)).json;
+  const changed = heightsBefore.some((h: number, i: number) => Math.abs(h - state.terrainHeights[i]) > 0.001);
+  assert(changed, "bot: el bot debe disparar solo tras el retraso configurado");
+
+  await post(`/rooms/${roomId}/heartbeat`, { playerId: shooter.playerId, token: shooter.token });
+  state = (await get(`/rooms/${roomId}/state`)).json;
+  p = state.players.find((p: any) => p.id === shooter.playerId);
+  assert(!p.isBot, "reconexión: un heartbeat debe devolver el control al jugador");
+  assert(p.connected, "reconexión: debe quedar marcado como conectado de nuevo");
+}
+
+async function runTimeoutPresenceCase() {
+  const j1 = await post("/quickmatch", { playerCount: 2, biomeId: "backyard" });
+  const j2 = await post("/quickmatch", { playerCount: 2, biomeId: "backyard" });
+  const roomId = j1.json.roomId;
+
+  const state = (await get(`/rooms/${roomId}/state`)).json;
+  const shooterId = state.turnOrder[state.currentTurnIndex];
+  const idle = shooterId === j1.json.playerId ? j1.json : j2.json;
+
+  // No hace heartbeat ni dispara: debe pasar a bot por inactividad tras DISCONNECT_TIMEOUT_MS.
+  await sleep(DISCONNECT_TIMEOUT_MS + 3500);
+  const after = (await get(`/rooms/${roomId}/state`)).json;
+  const p = after.players.find((p: any) => p.id === idle.playerId);
+  assert(p.isBot, "presencia: debe activarse el bot tras superar el tiempo de inactividad");
+}
+
+async function main() {
+  const app = express();
+  app.use(cors());
+  app.use(express.json());
+  const registry = new MatchRegistry();
+  app.use("/api", createApiRouter(registry));
+  const presenceLoop = registry.startPresenceLoop();
+
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(PORT, resolve));
+
+  try {
+    await run2PlayerCase();
+    console.error("[smoke-api] caso 2 jugadores OK");
+
+    await runBotAndReconnectCase();
+    console.error("[smoke-api] caso bot/reconexión OK");
+
+    await runTimeoutPresenceCase();
+    console.error("[smoke-api] caso timeout de presencia OK");
+
+    console.log("smoke test API OK — quickmatch, disparo, bot de respaldo y presencia funcionan");
+    process.exit(0);
+  } finally {
+    clearInterval(presenceLoop);
+    server.close();
+  }
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

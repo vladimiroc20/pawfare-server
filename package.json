@@ -9,7 +9,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "smoke": "tsx src/dev/smoke_test.ts"
+    "smoke": "tsx src/dev/smoke_test.ts",
+    "smoke:api": "tsx src/dev/smoke_test_api.ts"
   },
   "keywords": [],
   "author": "",
