@@ -226,3 +226,14 @@ export function resolveKnockback(
 
   return { damage, finalX: x, finalY: y };
 }
+
+// Cuando una explosión se lleva el terreno debajo de un jugador sin estar lo
+// bastante cerca como para empujarlo (p. ej. el túnel del Perforador pasa bajo
+// sus pies lejos del punto de impacto final), ese jugador debe caer igual —
+// sin esto, se queda flotando sobre el cráter. No hay desplazamiento horizontal
+// ni rebote: es una corrección de gravedad, no un empujón.
+export function settleOnGround(player: PlayerLike, heights: number[]): number | null {
+  const groundY = heightAt(heights, player.x);
+  if (player.y >= groundY - 0.5) return null;
+  return groundY;
+}

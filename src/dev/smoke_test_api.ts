@@ -5,6 +5,7 @@ import cors from "cors";
 import { MatchRegistry } from "../match/MatchRegistry";
 import { createApiRouter } from "../routes/api";
 import { DISCONNECT_TIMEOUT_MS } from "../sim/Constants";
+import { heightAt } from "../sim/Terrain";
 
 const PORT = 22780;
 const BASE = `http://localhost:${PORT}/api`;
@@ -155,21 +156,35 @@ function affectedRunCount(before: number[], after: number[]): number {
   return runs;
 }
 
+function assertNoFloatingPlayers(weaponId: string, players: any[], terrainHeights: number[]): void {
+  for (const p of players) {
+    const groundY = heightAt(terrainHeights, p.x);
+    assert(
+      p.y <= groundY + 0.6,
+      `armas (${weaponId}): ${p.id} no debe quedar flotando sobre el terreno (y=${p.y}, suelo=${groundY})`
+    );
+  }
+}
+
 async function fireAndMeasure(
   weaponId: string,
-  pull: { dx: number; dy: number } = { dx: 50, dy: -20 }
+  pull: { dx: number; dy: number } = { dx: 50, dy: -20 },
+  playerCount: number = 2
 ): Promise<{ spread: number; runs: number }> {
-  const j1 = await post("/quickmatch", { playerCount: 2, biomeId: "backyard" });
-  const j2 = await post("/quickmatch", { playerCount: 2, biomeId: "backyard" });
-  const roomId = j1.json.roomId;
+  const joins = [];
+  for (let i = 0; i < playerCount; i++) {
+    joins.push(await post("/quickmatch", { playerCount, biomeId: "backyard" }));
+  }
+  const roomId = joins[0].json.roomId;
+  const last = joins[joins.length - 1];
 
-  const shooterId = j2.json.state.turnOrder[j2.json.state.currentTurnIndex];
-  const shooter = shooterId === j1.json.playerId ? j1.json : j2.json;
-  const heightsBefore: number[] = j2.json.state.terrainHeights;
+  const shooterId = last.json.state.turnOrder[last.json.state.currentTurnIndex];
+  const shooter = joins.find((j) => j.json.playerId === shooterId)!;
+  const heightsBefore: number[] = last.json.state.terrainHeights;
 
   const fireRes = await post(`/rooms/${roomId}/fire`, {
-    playerId: shooter.playerId,
-    token: shooter.token,
+    playerId: shooter.json.playerId,
+    token: shooter.json.token,
     dx: pull.dx,
     dy: pull.dy,
     weaponId,
@@ -177,6 +192,7 @@ async function fireAndMeasure(
   assert(fireRes.status === 200, `armas (${weaponId}): el disparo debe aceptarse`);
 
   const after = await get(`/rooms/${roomId}/state`);
+  assertNoFloatingPlayers(weaponId, after.json.players, after.json.terrainHeights);
   return {
     spread: affectedIndexCount(heightsBefore, after.json.terrainHeights),
     runs: affectedRunCount(heightsBefore, after.json.terrainHeights),
@@ -216,21 +232,29 @@ async function runWeaponsCase() {
 
   // El perforador vuela casi recto y perfora terreno en vez de explotar al primer contacto —
   // el invariante es que deja una franja de terreno afectada notablemente más ancha que un
-  // impacto único de bazooka, no solo un cráter puntual.
+  // impacto único de bazooka, no solo un cráter puntual. El terreno/obstáculos son
+  // aleatorios por partida (un obstáculo en el camino puede acortarle el vuelo), así que
+  // igual que racimo/rebote arriba, se reintenta unas pocas veces antes de fallar.
   let piercer = await fireAndMeasure("piercer", { dx: -80, dy: -30 });
   let piercerAttempts = 1;
-  while (piercer.spread === 0 && piercerAttempts < 5) {
+  while ((piercer.spread === 0 || piercer.spread <= bazooka.spread) && piercerAttempts < 5) {
     piercer = await fireAndMeasure("piercer", { dx: -80, dy: -30 });
     piercerAttempts++;
   }
   assert(piercer.spread > 0, `armas: el perforador debe afectar el terreno (tras ${piercerAttempts} intentos)`);
   assert(
     piercer.spread > bazooka.spread,
-    `armas: el perforador debe dejar una franja más ancha que la bazooka (perforador=${piercer.spread}, bazooka=${bazooka.spread})`
+    `armas: el perforador debe dejar una franja más ancha que la bazooka (perforador=${piercer.spread}, bazooka=${bazooka.spread}, tras ${piercerAttempts} intentos)`
   );
 
   const fallback = await fireAndMeasure("arma-inexistente");
   assert(fallback.spread > 0, "armas: un weaponId inválido debe caer al arma por defecto, no romper el disparo");
+
+  // Con 4 jugadores repartidos por el mapa, un perforador con tiro largo tunela terreno
+  // lejos de su punto de impacto final — cobertura extra de "nadie debe quedar flotando"
+  // con más jugadores en el camino (fireAndMeasure ya lo valida por dentro). El caso
+  // determinista y sin depender de RNG vive en smoke_test_gravity.ts.
+  await fireAndMeasure("piercer", { dx: -85, dy: -25 }, 4);
 }
 
 async function runTimeoutPresenceCase() {
@@ -241,9 +265,24 @@ async function runTimeoutPresenceCase() {
   const state = (await get(`/rooms/${roomId}/state`)).json;
   const shooterId = state.turnOrder[state.currentTurnIndex];
   const idle = shooterId === j1.json.playerId ? j1.json : j2.json;
+  const other = idle.playerId === j1.json.playerId ? j2.json : j1.json;
 
-  // No hace heartbeat ni dispara: debe pasar a bot por inactividad tras DISCONNECT_TIMEOUT_MS.
-  await sleep(DISCONNECT_TIMEOUT_MS + 3500);
+  // El jugador "idle" no hace heartbeat ni dispara: debe pasar a bot por inactividad
+  // tras DISCONNECT_TIMEOUT_MS. El OTRO jugador sí manda heartbeat cada pocos segundos
+  // — sin esto, tras el timeout del primero le llega su turno al segundo con un
+  // `lastSeenAt` tan viejo como el del primero, así que también se marcaría bot,
+  // ambos bots se dispararían entre sí, y la sala podría terminar/borrarse antes de
+  // que el test alcance a leer el estado (bug real que se reprodujo en desarrollo).
+  const totalWaitMs = DISCONNECT_TIMEOUT_MS + 3500;
+  const heartbeatEveryMs = 4000;
+  let waited = 0;
+  while (waited < totalWaitMs) {
+    const step = Math.min(heartbeatEveryMs, totalWaitMs - waited);
+    await sleep(step);
+    waited += step;
+    await post(`/rooms/${roomId}/heartbeat`, { playerId: other.playerId, token: other.token });
+  }
+
   const after = (await get(`/rooms/${roomId}/state`)).json;
   const p = after.players.find((p: any) => p.id === idle.playerId);
   assert(p.isBot, "presencia: debe activarse el bot tras superar el tiempo de inactividad");

@@ -8,7 +8,14 @@ import {
   MIN_PLAYERS,
   POWER_SCALE,
 } from "../sim/Constants";
-import { damageObstacle, ObstacleLike, resolveKnockback, simulatePiercer, simulateProjectile } from "../sim/Combat";
+import {
+  damageObstacle,
+  ObstacleLike,
+  resolveKnockback,
+  settleOnGround,
+  simulatePiercer,
+  simulateProjectile,
+} from "../sim/Combat";
 import { buildRanking, isMatchOver, RankablePlayer, RankEntry } from "../sim/Ranking";
 import { spawnObstacles, spawnPlayers, SpawnedPlayer, SpawnedRock } from "../sim/Spawner";
 import { carveCrater, generateHeights } from "../sim/Terrain";
@@ -422,13 +429,20 @@ export class Match {
 
     for (const p of this.players) {
       const result = resolveKnockback(p, this.heights, x, y, radius, damage);
-      if (!result) continue;
-      const wasAlive = p.health > 0;
-      p.health = Math.max(0, p.health - result.damage);
-      p.x = result.finalX;
-      p.y = result.finalY;
-      if (wasAlive && p.health <= 0) {
-        this.eliminationOrder.push(p.id);
+      if (result) {
+        const wasAlive = p.health > 0;
+        p.health = Math.max(0, p.health - result.damage);
+        p.x = result.finalX;
+        p.y = result.finalY;
+        if (wasAlive && p.health <= 0) {
+          this.eliminationOrder.push(p.id);
+        }
+        continue;
+      }
+
+      const groundY = settleOnGround(p, this.heights);
+      if (groundY !== null) {
+        p.y = groundY;
       }
     }
   }
