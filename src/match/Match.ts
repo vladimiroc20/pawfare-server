@@ -20,7 +20,7 @@ export interface MatchOptions {
   biomeId?: string;
 }
 
-interface MatchPlayer {
+export interface MatchPlayer {
   id: string;
   token: string;
   label: string;
@@ -66,6 +66,23 @@ export interface MatchStateJSON {
   ranking: RankEntry[] | null;
 }
 
+export interface MatchSnapshot {
+  roomId: string;
+  playerCountTarget: number;
+  teamMode: boolean;
+  biomeId: string;
+  heights: number[];
+  obstacles: (SpawnedRock & ObstacleLike)[];
+  spawnSlots: SpawnedPlayer[];
+  players: MatchPlayer[];
+  turnOrder: string[];
+  currentTurnIndex: number;
+  wind: number;
+  phase: "waiting" | "playing" | "ended";
+  eliminationOrder: string[];
+  ranking: RankEntry[] | null;
+}
+
 export class Match {
   readonly roomId: string;
   private playerCountTarget: number;
@@ -83,9 +100,11 @@ export class Match {
   private eliminationOrder: string[] = [];
   private ranking: RankEntry[] | null = null;
   private botTimer: NodeJS.Timeout | null = null;
+  private onChange?: () => void;
 
-  constructor(roomId: string, options: MatchOptions) {
+  constructor(roomId: string, options: MatchOptions, onChange?: () => void) {
     this.roomId = roomId;
+    this.onChange = onChange;
     this.playerCountTarget = clamp(options.playerCount ?? 2, MIN_PLAYERS, MAX_PLAYERS);
     this.teamMode = !!options.teamMode && this.playerCountTarget === 4;
     this.biome = options.biomeId ? getBiome(options.biomeId) : randomBiome();
@@ -93,6 +112,45 @@ export class Match {
     this.heights = generateHeights();
     this.obstacles = spawnObstacles(this.biome, this.heights).map((r) => ({ ...r }));
     this.spawnSlots = spawnPlayers(this.playerCountTarget, this.teamMode, this.heights);
+  }
+
+  static fromSnapshot(snapshot: MatchSnapshot, onChange?: () => void): Match {
+    const match = new Match(
+      snapshot.roomId,
+      { playerCount: snapshot.playerCountTarget, teamMode: snapshot.teamMode, biomeId: snapshot.biomeId },
+      onChange
+    );
+    match.heights = snapshot.heights;
+    match.obstacles = snapshot.obstacles;
+    match.spawnSlots = snapshot.spawnSlots;
+    match.players = snapshot.players;
+    match.turnOrder = snapshot.turnOrder;
+    match.currentTurnIndex = snapshot.currentTurnIndex;
+    match.wind = snapshot.wind;
+    match.phase = snapshot.phase;
+    match.eliminationOrder = snapshot.eliminationOrder;
+    match.ranking = snapshot.ranking;
+    match.maybeScheduleBotTurn();
+    return match;
+  }
+
+  toSnapshot(): MatchSnapshot {
+    return {
+      roomId: this.roomId,
+      playerCountTarget: this.playerCountTarget,
+      teamMode: this.teamMode,
+      biomeId: this.biome.id,
+      heights: this.heights,
+      obstacles: this.obstacles,
+      spawnSlots: this.spawnSlots,
+      players: this.players,
+      turnOrder: this.turnOrder,
+      currentTurnIndex: this.currentTurnIndex,
+      wind: this.wind,
+      phase: this.phase,
+      eliminationOrder: this.eliminationOrder,
+      ranking: this.ranking,
+    };
   }
 
   get isJoinable(): boolean {
@@ -137,6 +195,7 @@ export class Match {
       this.maybeScheduleBotTurn();
     }
 
+    this.onChange?.();
     return { playerId: player.id, token };
   }
 
@@ -144,6 +203,7 @@ export class Match {
     const player = this.authenticate(playerId, token);
     if (!AVAILABLE_SPECIES.includes(species)) return;
     player.species = species;
+    this.onChange?.();
   }
 
   heartbeat(playerId: string, token: string): void {
@@ -153,6 +213,7 @@ export class Match {
       player.connected = true;
       player.isBot = false;
     }
+    this.onChange?.();
   }
 
   leave(playerId: string, token: string): void {
@@ -160,6 +221,7 @@ export class Match {
     player.connected = false;
     player.isBot = true;
     this.maybeScheduleBotTurn();
+    this.onChange?.();
   }
 
   fire(playerId: string, token: string, dx: number, dy: number, weaponId?: string): void {
@@ -180,6 +242,7 @@ export class Match {
       current.connected = false;
       current.isBot = true;
       this.maybeScheduleBotTurn();
+      this.onChange?.();
     }
   }
 
@@ -352,6 +415,7 @@ export class Match {
     if (isMatchOver(rankable, this.teamMode)) {
       this.phase = "ended";
       this.ranking = buildRanking(rankable, this.eliminationOrder, this.teamMode);
+      this.onChange?.();
       return;
     }
 
@@ -367,6 +431,7 @@ export class Match {
     }
     this.rollWind();
     this.maybeScheduleBotTurn();
+    this.onChange?.();
   }
 }
 

@@ -10,7 +10,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "smoke": "tsx src/dev/smoke_test.ts",
-    "smoke:api": "tsx src/dev/smoke_test_api.ts"
+    "smoke:api": "tsx src/dev/smoke_test_api.ts",
+    "smoke:persistence": "tsx src/dev/smoke_test_persistence.ts"
   },
   "keywords": [],
   "author": "",
