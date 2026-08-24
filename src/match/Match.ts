@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { BiomeSim, getBiome, randomBiome } from "../sim/Biomes";
 import {
+  AVAILABLE_SPECIES,
   DISCONNECT_TIMEOUT_MS,
   MAX_PLAYERS,
   MAX_PULL,
@@ -137,6 +138,12 @@ export class Match {
     }
 
     return { playerId: player.id, token };
+  }
+
+  selectCharacter(playerId: string, token: string, species: string): void {
+    const player = this.authenticate(playerId, token);
+    if (!AVAILABLE_SPECIES.includes(species)) return;
+    player.species = species;
   }
 
   heartbeat(playerId: string, token: string): void {

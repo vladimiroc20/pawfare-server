@@ -39,6 +39,21 @@ export function createApiRouter(registry: MatchRegistry): Router {
     }
   });
 
+  router.post("/rooms/:roomId/select-character", (req, res) => {
+    const match = registry.get(req.params.roomId);
+    if (!match) {
+      res.status(404).json({ error: "Sala no encontrada" });
+      return;
+    }
+    try {
+      const { playerId, token, species } = req.body ?? {};
+      match.selectCharacter(playerId, token, String(species ?? ""));
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
   router.post("/rooms/:roomId/heartbeat", (req, res) => {
     const match = registry.get(req.params.roomId);
     if (!match) {

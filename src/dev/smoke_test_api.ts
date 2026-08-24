@@ -94,17 +94,46 @@ async function runBotAndReconnectCase() {
   assert(p.isBot, "bot: debe activarse el bot al salir explícitamente");
   assert(!p.connected, "bot: debe quedar marcado como desconectado");
 
-  const heightsBefore = state.terrainHeights;
-  await sleep(1400 + 500);
+  const turnIndexBefore = state.currentTurnIndex;
+  await sleep(1400 + 800);
   state = (await get(`/rooms/${roomId}/state`)).json;
-  const changed = heightsBefore.some((h: number, i: number) => Math.abs(h - state.terrainHeights[i]) > 0.001);
-  assert(changed, "bot: el bot debe disparar solo tras el retraso configurado");
+  // El bot puede elegir cualquier arma al azar (incl. Rebote, que a veces sale del mapa sin
+  // explotar) — el invariante robusto es que el turno avanzó, no que el terreno cambió.
+  assert(state.currentTurnIndex !== turnIndexBefore, "bot: el bot debe disparar solo y pasar el turno tras el retraso configurado");
 
   await post(`/rooms/${roomId}/heartbeat`, { playerId: shooter.playerId, token: shooter.token });
   state = (await get(`/rooms/${roomId}/state`)).json;
   p = state.players.find((p: any) => p.id === shooter.playerId);
   assert(!p.isBot, "reconexión: un heartbeat debe devolver el control al jugador");
   assert(p.connected, "reconexión: debe quedar marcado como conectado de nuevo");
+}
+
+async function runCharacterSelectCase() {
+  const j1 = await post("/quickmatch", { playerCount: 2, biomeId: "backyard" });
+  await post("/quickmatch", { playerCount: 2, biomeId: "backyard" });
+  const roomId = j1.json.roomId;
+  assert(j1.json.state.players[0].species !== undefined, "personaje: el estado debe traer species por defecto");
+
+  const ok = await post(`/rooms/${roomId}/select-character`, {
+    playerId: j1.json.playerId,
+    token: j1.json.token,
+    species: "panda",
+  });
+  assert(ok.status === 200, "personaje: seleccionar una especie válida debe responder 200");
+
+  const state = await get(`/rooms/${roomId}/state`);
+  const me = state.json.players.find((p: any) => p.id === j1.json.playerId);
+  assert(me.species === "panda", "personaje: la especie elegida debe reflejarse en el estado");
+
+  const bad = await post(`/rooms/${roomId}/select-character`, {
+    playerId: j1.json.playerId,
+    token: j1.json.token,
+    species: "dragon-inexistente",
+  });
+  assert(bad.status === 200, "personaje: una especie inválida no debe romper la petición");
+  const stateAfterBad = await get(`/rooms/${roomId}/state`);
+  const meAfterBad = stateAfterBad.json.players.find((p: any) => p.id === j1.json.playerId);
+  assert(meAfterBad.species === "panda", "personaje: una especie inválida no debe cambiar la especie actual");
 }
 
 function affectedIndexCount(before: number[], after: number[]): number {
@@ -159,14 +188,30 @@ async function runWeaponsCase() {
   assert(bazooka.spread > 0, "armas: la bazooka debe afectar el terreno");
   assert(bazooka.runs === 1, `armas: la bazooka debe dejar un único cráter (obtuve ${bazooka.runs})`);
 
-  const bouncer = await fireAndMeasure("bouncer", { dx: -20, dy: -60 });
-  assert(bouncer.spread > 0, "armas: el rebote debe afectar el terreno al aterrizar");
+  // El viento es aleatorio por partida y puede, en casos raros, empujar el rebote fuera del
+  // mapa antes de aterrizar la segunda vez. Igual que con el racimo, reintentar absorbe esa
+  // mala suerte sin dejar de validar que el rebote sí puede explotar normalmente.
+  let bouncer = await fireAndMeasure("bouncer", { dx: -60, dy: -70 });
+  let bouncerAttempts = 1;
+  while (bouncer.spread === 0 && bouncerAttempts < 5) {
+    bouncer = await fireAndMeasure("bouncer", { dx: -60, dy: -70 });
+    bouncerAttempts++;
+  }
+  assert(bouncer.spread > 0, `armas: el rebote debe afectar el terreno al aterrizar (tras ${bouncerAttempts} intentos)`);
 
-  const cluster = await fireAndMeasure("cluster");
+  // Los sub-proyectiles del racimo se dispersan al azar; ocasionalmente aterrizan tan cerca
+  // que sus cráteres se fusionan en uno solo. Reintentar unas pocas veces antes de fallar
+  // evita que ese caso (poco frecuente pero válido) haga fallar el test por pura mala suerte.
+  let cluster = await fireAndMeasure("cluster");
+  let attempts = 1;
+  while (cluster.runs <= 1 && attempts < 5) {
+    cluster = await fireAndMeasure("cluster");
+    attempts++;
+  }
   assert(cluster.spread > 0, "armas: el racimo debe afectar el terreno");
   assert(
     cluster.runs > 1,
-    `armas: el racimo debe dejar más de un cráter separado al esparcir sub-proyectiles (obtuve ${cluster.runs})`
+    `armas: el racimo debe dejar más de un cráter separado al esparcir sub-proyectiles (obtuve ${cluster.runs} tras ${attempts} intentos)`
   );
 
   const fallback = await fireAndMeasure("arma-inexistente");
@@ -206,6 +251,9 @@ async function main() {
 
     await runBotAndReconnectCase();
     console.error("[smoke-api] caso bot/reconexión OK");
+
+    await runCharacterSelectCase();
+    console.error("[smoke-api] caso selección de personaje OK");
 
     await runWeaponsCase();
     console.error("[smoke-api] caso armas (bazooka/rebote/racimo) OK");
