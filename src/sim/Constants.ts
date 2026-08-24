@@ -31,7 +31,8 @@ export const ROCK_SIZES: RockSize[] = [
 ];
 
 export const PLAYER_COLORS = ["#3b82f6", "#ef4444", "#22c55e", "#eab308"];
-export const PLAYER_SPECIES = ["dog", "cat", "dog", "cat"];
+export const PLAYER_SPECIES = ["dog", "cat", "rabbit", "fox"];
+export const AVAILABLE_SPECIES = ["dog", "cat", "rabbit", "panda", "fox"];
 export const PLAYER_LABELS = ["Jugador 1", "Jugador 2", "Jugador 3", "Jugador 4"];
 
 export const MAX_TURN_SECONDS = 30;
