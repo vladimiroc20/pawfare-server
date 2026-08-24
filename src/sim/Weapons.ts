@@ -24,8 +24,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
   },
   cluster: {
     id: "cluster",
-    name: "Racimo",
-    icon: "💥",
+    name: "Granada Racimo",
+    icon: "💣",
     explosionRadius: 18,
     damage: 8,
     bounces: 0,
@@ -35,8 +35,8 @@ export const WEAPONS: Record<string, WeaponDef> = {
   },
   bouncer: {
     id: "bouncer",
-    name: "Rebote",
-    icon: "🎾",
+    name: "Granada Rebotante",
+    icon: "🟢",
     explosionRadius: 30,
     damage: 20,
     bounces: 1,
