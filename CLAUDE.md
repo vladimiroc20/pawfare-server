@@ -24,9 +24,16 @@ pawfare-server/
 │   │   ├── Combat.ts        # simulateProjectile (vuelo tick a tick) + resolveKnockback (con settle server-side)
 │   │   ├── Ranking.ts       # espejo de _build_ffa_ranking/_build_team_ranking del cliente
 │   │   └── Spawner.ts       # espejo de _spawn_players/_generate_obstacles del cliente
-│   └── dev/smoke_test.ts    # test de regresión, ver más abajo
+│   ├── match/               # segunda implementación de sala, para el cliente Godot — ver "API REST" abajo
+│   │   ├── Match.ts          # misma orquestación que PawfareRoom (turnos, bot, ranking) pero sin Colyseus
+│   │   └── MatchRegistry.ts  # registro en memoria de partidas + bucle de chequeo de presencia
+│   ├── routes/api.ts        # rutas Express: /api/quickmatch, /rooms/:id/{state,fire,heartbeat,leave}
+│   ├── dev/smoke_test.ts     # test de regresión de PawfareRoom/Colyseus, ver más abajo
+│   └── dev/smoke_test_api.ts # test de regresión de la API REST/Match, ver más abajo
 └── package.json
 ```
+
+**Dos implementaciones de sala en paralelo, mismo motor de simulación:** `PawfareRoom` (Colyseus/WebSocket) y `Match` (REST/JSON) implementan las mismas reglas — turnos, bot de respaldo, ranking — pero con tipos de estado distintos (Schema de Colyseus vs. objetos planos), así que hay algo de duplicación en la orquestación de sala. **`pawfare-client` (Godot) usa la API REST (`Match`), no Colyseus** — no hay SDK oficial de Colyseus para Godot, y portar su protocolo binario propietario a GDScript a ciegas era demasiado riesgo sin poder validarlo. `PawfareRoom` queda disponible para un futuro cliente web/JS. Si cambias una regla de juego (condición de victoria, cálculo de daño, etc.), probablemente haya que tocar los dos — la lógica de físicas en sí (`src/sim/`) es compartida y no necesita duplicarse.
 
 **Toda la lógica de físicas/daño/terreno en `src/sim/` es un espejo deliberado de `pawfare-client/scripts/`** (mismas constantes, mismas fórmulas) para que el servidor pueda ser la fuente de verdad sin que el resultado se sienta distinto al cliente. Si cambias una constante o fórmula de física en un lado, cámbiala en el otro.
 
@@ -63,8 +70,18 @@ Además, como Node todavía no implementa `Symbol.metadata` de forma nativa, `sr
 - bot de respaldo: un jugador se desconecta a mitad de partida y el bot dispara solo en su turno,
 - reconexión: el jugador vuelve dentro de la ventana y recupera el control (mismo `sessionId`).
 
+### API REST (`/api/...`) — lo que usa `pawfare-client`
+
+- `POST /api/quickmatch` `{playerCount, teamMode, biomeId}` → encuentra una sala "waiting" que calce o crea una nueva, une al jugador, responde `{roomId, playerId, token, state}`. `token` es el secreto de esa butaca — hace falta para `fire`/`heartbeat`/`leave`.
+- `GET /api/rooms/:roomId/state` → estado completo en JSON (fase, viento, jugadores, obstáculos, `terrainHeights`, `ranking` si terminó). Sin autenticación — es de solo lectura y no expone tokens (`Match.toJSON()` los omite explícitamente).
+- `POST /api/rooms/:roomId/fire` `{playerId, token, dx, dy}` → igual que `aim_fire` de Colyseus: valida turno/token, resuelve el disparo servidor-side, devuelve el estado actualizado.
+- `POST /api/rooms/:roomId/heartbeat` `{playerId, token}` → el cliente debe llamarlo mientras esté activo (cada ~5s). Si un jugador deja de mandar heartbeat mientras es su turno por más de `DISCONNECT_TIMEOUT_MS` (15s), pasa a `isBot=true` automáticamente — el REST no tiene conexión persistente que "se caiga", así que la presencia se infiere por heartbeat en vez de por `onLeave`.
+- `POST /api/rooms/:roomId/leave` `{playerId, token}` → desconexión explícita e inmediata (mismo efecto que el timeout, pero sin esperar).
+
+**Bucle de presencia:** `MatchRegistry.startPresenceLoop()` corre cada `PRESENCE_CHECK_INTERVAL_MS` (3s) y llama `match.checkPresence()` en cada partida activa, además de descartar partidas ya terminadas (`match.isDisposable`).
+
 ## Estado actual
 
-**Servidor funcional (Fase 3 en progreso):** salas Colyseus de 2-4 jugadores, todo `src/sim/` como espejo de la física/terreno/ranking del cliente, turnos con bot de respaldo automático al desconectarse (`onLeave` marca `isBot=true` sin remover al jugador) y reconexión vía `allowReconnection` (ventana de 60s, `Constants.RECONNECTION_WINDOW_SECONDS`) que devuelve el control si el jugador vuelve a tiempo. `npm run smoke` valida los 4 escenarios de punta a punta contra un servidor real. `npm run build`/`npm run typecheck` (tsc) limpios.
+**Servidor funcional y conectado al cliente (Fase 3 casi completa):** dos implementaciones de sala en paralelo sobre el mismo `src/sim/` — `PawfareRoom` (Colyseus/WS, sin cliente todavía) y `Match`+API REST (lo que usa `pawfare-client` hoy). Turnos, bot de respaldo, reconexión/heartbeat y ranking funcionan en ambas. `npm run smoke` (Colyseus) y `npm run smoke:api` (REST) validan los escenarios de punta a punta contra un servidor real, incluyendo el timeout real de `DISCONNECT_TIMEOUT_MS`. `npm run build`/`npm run typecheck` limpios. Validado además desde el lado Godot: `pawfare-client/scripts/dev/network_smoke_test.gd` conecta dos clientes reales contra este servidor y confirma que caen en la misma sala, la partida arranca, y un disparo por HTTP cambia el terreno.
 
-**Pendiente:** el cliente (`pawfare-client`) todavía no se conecta a este servidor por red — sigue jugando 100% local. Conectar el cliente Godot (WebSocket a esta sala, renderizar el estado sincronizado en vez de simular localmente) es el siguiente paso real de integración, y probablemente donde aparezcan más ajustes finos (la física del cliente y del servidor deben sentirse idénticas, ya están escritas con las mismas constantes pero no se han comparado lado a lado todavía).
+**Pendiente / rough edges:** no hay animación de vuelo del proyectil en el cliente online todavía — el disparo se resuelve de una vez en el servidor y el cliente solo ve el resultado en el siguiente *poll* (~700ms). El `Match` en memoria no persiste a disco/DB — si el proceso se reinicia, todas las partidas activas se pierden (aceptable para esta etapa, pero antes de producción real hace falta al menos persistencia de sesión). `PawfareRoom`/Colyseus queda sin cliente propio por ahora — decidir si vale la pena mantenerlo (útil si algún día hay cliente web) o retirarlo para no duplicar la orquestación de sala.
